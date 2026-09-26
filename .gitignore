@@ -6,3 +6,4 @@ backend/.pytest_cache/
 frontend/node_modules/
 frontend/dist/
 faltantes.md
+roadmap.md
