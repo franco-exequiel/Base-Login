@@ -17,10 +17,11 @@ services:
 
   api:
     build: ./backend
+    env_file:
+      - ./backend/.env
     environment:
-      DATABASE_URL: postgresql+psycopg://portfolio:portfolio@postgres:5432/portfolio
-      JWT_SECRET: local-docker-secret-change-me-before-production
-      CORS_ORIGINS: http://localhost:5173
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      CORS_ORIGINS: ${FRONTEND_URL:-http://localhost:5173}
     ports:
       - "8000:8000"
     depends_on:
@@ -31,7 +32,7 @@ services:
     build:
       context: ./frontend
       args:
-        VITE_API_URL: http://localhost:8000/api
+        VITE_API_URL: ${API_URL:-http://localhost:8000/api}
     ports:
       - "5173:80"
     depends_on:

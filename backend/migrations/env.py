@@ -3,7 +3,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.core.config import settings
 from app.db import Base
-from app.models import User
+from app.models import EmailVerificationToken, PasswordResetToken, RefreshToken, User
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))

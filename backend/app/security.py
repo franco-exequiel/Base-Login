@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -24,3 +26,12 @@ def create_access_token(user_id: int) -> str:
 def decode_access_token(token: str) -> int:
     payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     return int(payload["sub"])
+
+
+def create_opaque_token() -> tuple[str, str]:
+    raw_token = secrets.token_urlsafe(32)
+    return raw_token, hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def hash_opaque_token(raw_token: str) -> str:
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()

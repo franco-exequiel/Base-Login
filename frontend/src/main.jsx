@@ -1,34 +1,44 @@
-import React, { StrictMode, useState } from "react";
+import React, { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { API_URL } from "./config";
 import "./styles.css";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api";
+const passwordPattern = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,128}$/;
 
-function App() {
-  const [mode, setMode] = useState("login");
-  const [form, setForm] = useState({ email: "", password: "" });
-  const [user, setUser] = useState(null);
-  const [message, setMessage] = useState("");
+function csrfToken() { return document.cookie.split("; ").find(value => value.startsWith("csrf_token="))?.split("=")[1]; }
+function apiFetch(path, options = {}) { const headers = new Headers(options.headers); if (options.method && options.method !== "GET") { const csrf = csrfToken(); if (csrf) headers.set("X-CSRF-Token", csrf); } return fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" }); }
 
-  async function submit(event) {
-    event.preventDefault();
-    setMessage("");
-    const isLogin = mode === "login";
-    const response = await fetch(`${API_URL}/auth/${isLogin ? "login" : "register"}`, {
-      method: "POST",
-      headers: { "Content-Type": isLogin ? "application/x-www-form-urlencoded" : "application/json" },
-      body: isLogin ? new URLSearchParams({ username: form.email, password: form.password }) : JSON.stringify(form),
-    });
-    const data = await response.json();
-    if (!response.ok) return setMessage(data.detail ?? "Something went wrong");
-    if (!isLogin) return setMode("login");
-    localStorage.setItem("token", data.access_token);
-    const me = await fetch(`${API_URL}/auth/me`, { headers: { Authorization: `Bearer ${data.access_token}` } });
-    setUser(await me.json());
-  }
-
-  if (user) return <main><section className="card"><p className="eyebrow">PORTFOLIO API</p><h1>Welcome back.</h1><p>Authenticated as <strong>{user.email}</strong>.</p><button onClick={() => { localStorage.removeItem("token"); setUser(null); }}>Log out</button></section></main>;
-  return <main><section className="card"><p className="eyebrow">PORTFOLIO API</p><h1>{mode === "login" ? "Sign in." : "Create account."}</h1><p className="muted">A small full-stack foundation built with FastAPI and React.</p><form onSubmit={submit}><label>Email<input type="email" required value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label><label>Password<input type="password" required minLength="8" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></label>{message && <p className="error">{message}</p>}<button type="submit">{mode === "login" ? "Sign in" : "Register"}</button></form><button className="link" onClick={() => { setMode(mode === "login" ? "register" : "login"); setMessage(""); }}>{mode === "login" ? "Create an account" : "I already have an account"}</button></section></main>;
+function VerifyEmail() {
+  const [message, setMessage] = useState("Verifying your email..."); const [error, setError] = useState(false);
+  useEffect(() => { const token = new URLSearchParams(window.location.search).get("token"); if (!token) return setError(true), setMessage("Verification token is missing."); apiFetch(`/auth/verify-email?token=${encodeURIComponent(token)}`).then(async response => { const data = await response.json(); if (!response.ok) throw new Error(data.detail); setMessage(data.message); }).catch(reason => { setError(true); setMessage(reason.message); }); }, []);
+  return <main><section className="card"><p className="eyebrow">PORTFOLIO API</p><h1>{error ? "Verification failed." : "Email verified."}</h1><p className={error ? "error" : "muted"}>{message}</p><a className="link" href="/">Go to login</a></section></main>;
 }
 
-createRoot(document.getElementById("root")).render(<StrictMode><App /></StrictMode>);
+function ResetPassword() {
+  const [password, setPassword] = useState(""); const [message, setMessage] = useState(""); const [error, setError] = useState(false);
+  async function submit(event) { event.preventDefault(); if (!passwordPattern.test(password)) return setError(true), setMessage("Use 8+ characters with a letter, a number and a special character."); const token = new URLSearchParams(window.location.search).get("token"); const response = await apiFetch("/auth/reset-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, password }) }); const data = await response.json(); setError(!response.ok); setMessage(data.message ?? data.detail); }
+  return <main><section className="card"><p className="eyebrow">PORTFOLIO API</p><h1>Reset password.</h1><form onSubmit={submit}><label>New password<input type="password" required minLength="8" value={password} onChange={event => setPassword(event.target.value)} /></label>{message && <p className={error ? "error" : "muted"}>{message}</p>}<button type="submit">Save password</button></form><a className="link" href="/">Go to login</a></section></main>;
+}
+
+function Dashboard({ user, onLogout }) {
+  const [passwords, setPasswords] = useState({ current_password: "", new_password: "" }); const [emailForm, setEmailForm] = useState({ new_email: "", password: "" }); const [sessions, setSessions] = useState([]); const [message, setMessage] = useState("");
+  useEffect(() => { apiFetch("/auth/sessions").then(response => response.json()).then(setSessions); }, []);
+  async function changePassword(event) { event.preventDefault(); if (!passwordPattern.test(passwords.new_password)) return setMessage("New password needs 8+ characters, a letter, a number and a special character."); const response = await apiFetch("/auth/change-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(passwords) }); const data = await response.json(); setMessage(data.message ?? data.detail); if (response.ok) onLogout(false); }
+  async function changeEmail(event) { event.preventDefault(); const response = await apiFetch("/auth/change-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(emailForm) }); const data = await response.json(); setMessage(data.message ?? data.detail); if (response.ok) onLogout(false); }
+  async function deleteAccount() { const password = window.prompt("Enter your password to delete the account"); if (!password) return; const response = await apiFetch("/auth/account", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) }); const data = await response.json(); setMessage(data.message ?? data.detail); if (response.ok) onLogout(false); }
+  async function revokeSession(id) { await apiFetch(`/auth/sessions/${id}`, { method: "DELETE" }); setSessions(sessions.filter(session => session.id !== id)); }
+  return <main><section className="card"><p className="eyebrow">PORTFOLIO API</p><h1>Account.</h1><p>Authenticated as <strong>{user.email}</strong>.</p>{message && <p className="muted">{message}</p>}<h2>Change password</h2><form onSubmit={changePassword}><input type="password" placeholder="Current password" required value={passwords.current_password} onChange={event => setPasswords({ ...passwords, current_password: event.target.value })} /><input type="password" placeholder="New password" required minLength="8" value={passwords.new_password} onChange={event => setPasswords({ ...passwords, new_password: event.target.value })} /><button type="submit">Change password</button></form><h2>Change email</h2><form onSubmit={changeEmail}><input type="email" placeholder="New email" required value={emailForm.new_email} onChange={event => setEmailForm({ ...emailForm, new_email: event.target.value })} /><input type="password" placeholder="Current password" required value={emailForm.password} onChange={event => setEmailForm({ ...emailForm, password: event.target.value })} /><button type="submit">Change email</button></form><h2>Active sessions</h2>{sessions.map(session => <p key={session.id} className="session">Session {session.id} <button onClick={() => revokeSession(session.id)}>Revoke</button></p>)}<button onClick={() => onLogout(true)}>Log out</button><button className="danger" onClick={deleteAccount}>Delete account</button></section></main>;
+}
+
+function App() {
+  const [mode, setMode] = useState("login"); const [form, setForm] = useState({ email: "", password: "" }); const [user, setUser] = useState(null); const [message, setMessage] = useState("");
+  useEffect(() => { apiFetch("/auth/me").then(response => response.ok ? response.json() : null).then(setUser); }, []);
+  async function submit(event) { event.preventDefault(); setMessage(""); if (mode === "forgot") { const response = await apiFetch("/auth/forgot-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: form.email }) }); const data = await response.json(); return setMessage(data.message ?? data.detail); } if (mode === "register" && !passwordPattern.test(form.password)) return setMessage("Password needs 8+ characters, a letter, a number and a special character."); const isLogin = mode === "login"; const response = await apiFetch(`/auth/${isLogin ? "login" : "register"}`, { method: "POST", headers: { "Content-Type": isLogin ? "application/x-www-form-urlencoded" : "application/json" }, body: isLogin ? new URLSearchParams({ username: form.email, password: form.password }) : JSON.stringify(form) }); const data = await response.json(); if (!response.ok) return setMessage(data.detail ?? "Something went wrong"); if (!isLogin) return setMessage("Account created. Check your email to verify it."); setUser(await (await apiFetch("/auth/me")).json()); }
+  async function logout(callApi = true) { if (callApi) await apiFetch("/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); setUser(null); }
+  if (user) return <Dashboard user={user} onLogout={logout} />;
+  const title = mode === "login" ? "Sign in." : mode === "register" ? "Create account." : "Forgot password.";
+  return <main><section className="card"><p className="eyebrow">PORTFOLIO API</p><h1>{title}</h1><p className="muted">A small full-stack foundation built with FastAPI and React.</p><form onSubmit={submit}><label>Email<input type="email" required value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} /></label>{mode !== "forgot" && <label>Password<input type="password" required minLength="8" value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} /></label>}{message && <p className="error">{message}</p>}<button type="submit">{mode === "login" ? "Sign in" : mode === "register" ? "Register" : "Send reset email"}</button></form>{mode === "login" && <button className="link" onClick={() => { setMode("forgot"); setMessage(""); }}>Forgot password?</button>}<button className="link" onClick={() => { setMode(mode === "login" || mode === "forgot" ? "register" : "login"); setMessage(""); }}>{mode === "register" ? "I already have an account" : "Create an account"}</button></section></main>;
+}
+
+const page = window.location.pathname;
+createRoot(document.getElementById("root")).render(<StrictMode>{page === "/verify-email" ? <VerifyEmail /> : page === "/reset-password" ? <ResetPassword /> : <App />}</StrictMode>);
